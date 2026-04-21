@@ -1,3 +1,5 @@
+
+
 # Insurance Company Management System
 CMPSC 430 – Spring 2026, Project A
 
@@ -10,6 +12,10 @@ A staff-facing application to manage insurance policies backed by an Oracle data
 - **HomeInsurance** – home policy details linked to a policy
 - **CarInsurance** – car policy details linked to a policy
 - **LifeInsurance** – life policy details linked to a policy
+
+## ER Diagram
+
+![Alt text](https://github.com/mark-kirylka-shaped-pool/InsuranceCompanyDatabase/img/erdiagram.jpg?raw=true "ER Diagram")
 
 ## Features
 
