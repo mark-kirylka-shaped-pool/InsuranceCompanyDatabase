@@ -15,7 +15,7 @@ A staff-facing application to manage insurance policies backed by an Oracle data
 
 ## ER Diagram
 
-![Alt text](https://github.com/mark-kirylka-shaped-pool/InsuranceCompanyDatabase/img/erdiagram.jpg?raw=true "ER Diagram")
+<img src="https://github.com/mark-kirylka-shaped-pool/InsuranceCompanyDatabase/blob/main/img/erdiagram.jpg" width="500"></img>
 
 ## Features
 
