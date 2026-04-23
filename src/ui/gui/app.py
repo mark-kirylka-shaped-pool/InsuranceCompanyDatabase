@@ -1,7 +1,13 @@
+import sys
+import os
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
+
 import tkinter as tk
 from tkinter import ttk
 
 from src.dao.customer_dao import CustomerDAO
+from src.dao.policy_dao import PolicyDAO
 
 class CustomerTab(ttk.Frame):
     """
@@ -149,6 +155,10 @@ class PolicyTab(ttk.Frame):
     def __init__(self, parent):
         super().__init__(parent)
 
+        # --- Data Access ---
+        self.policy_dao = PolicyDAO()
+        self.current_policies = []
+
         # --- UI Layout ---
         left_frame = ttk.Frame(self)
         left_frame.pack(side="left", fill="y", padx=10, pady=10)
@@ -169,6 +179,8 @@ class PolicyTab(ttk.Frame):
 
         self.policy_listbox = tk.Listbox(left_frame, width=35, height=20)
         self.policy_listbox.pack(fill="y", expand=True, pady=5)
+        self.policy_listbox.bind("<<ListboxSelect>>", self.on_policy_select)
+        self.load_policies()
 
         # RIGHT PANEL: Base Policy Form
         ttk.Label(right_frame, text="Policy Details", font=("Helvetica", 16, "bold")).pack(pady=(0, 10))
@@ -279,6 +291,31 @@ class PolicyTab(ttk.Frame):
             self.car_frame.pack(fill="both", expand=True)
         elif selected_type == "LIFE":
             self.life_frame.pack(fill="both", expand=True)
+
+    def load_policies(self):
+        """Fetches policies from the Oracle DB and populates the listbox."""
+        self.policy_listbox.delete(tk.END)
+        try:
+            self.current_policies = self.policy_dao.get_all()
+            for p in self.current_policies:
+                display_text = f"ID {p.policy_id}: Customer {p.customer_id} - ${p.coverage}"
+                self.policy_listbox.insert(tk.END, display_text)
+        except Exception as e:
+            print(f"Database Error: {e}")
+            self.policy_listbox.insert(tk.END, "Error connecting to Database")
+
+    def on_policy_select(self, event):
+        """Fills the form on the right when a policy is clicked on the left."""
+        if not self.policy_listbox.curselection():
+            return
+
+        index = self.policy_listbox.curselection()[0]
+        selected_policy = self.current_policies[index]
+
+        self.customer_id_var.set(str(selected_policy.customer_id or ""))
+        self.start_date_var.set(selected_policy.start_date.strftime("%Y-%m-%d") if selected_policy.start_date else "")
+        self.monthly_payment_var.set(str(selected_policy.monthly_payment or ""))
+        self.coverage_var.set(str(selected_policy.coverage or ""))
 
 
 class InsuranceApp(tk.Tk):
