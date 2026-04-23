@@ -8,6 +8,9 @@ from tkinter import ttk
 
 from src.dao.customer_dao import CustomerDAO
 from src.dao.policy_dao import PolicyDAO
+from src.dao.home_insurance_dao import HomeInsuranceDAO
+from src.dao.car_insurance_dao import CarInsuranceDAO
+from src.dao.life_insurance_dao import LifeInsuranceDAO
 
 class CustomerTab(ttk.Frame):
     """
@@ -157,6 +160,9 @@ class PolicyTab(ttk.Frame):
 
         # --- Data Access ---
         self.policy_dao = PolicyDAO()
+        self.home_insurance_dao = HomeInsuranceDAO()
+        self.car_insurance_dao = CarInsuranceDAO()
+        self.life_insurance_dao = LifeInsuranceDAO()
         self.current_policies = []
 
         # --- UI Layout ---
@@ -197,15 +203,12 @@ class PolicyTab(ttk.Frame):
         self.create_form_row(right_frame, "Monthly Payment ($):", self.monthly_payment_var)
         self.create_form_row(right_frame, "Coverage Amount ($):", self.coverage_var)
 
-        # Dropdown for Policy Type
+        # Policy Type (static text, determined by which child table has the record)
         type_row = ttk.Frame(right_frame)
         type_row.pack(fill="x", pady=5)
         ttk.Label(type_row, text="Policy Type:", width=25).pack(side="left")
-        type_combo = ttk.Combobox(type_row, textvariable=self.policy_type_var, values=["HOME", "CAR", "LIFE"], state="readonly")
-        type_combo.pack(side="left", fill="x", expand=True)
-
-        # Trigger an update whenever the dropdown value changes
-        self.policy_type_var.trace_add("write", self.update_dynamic_frames)
+        self.policy_type_label = ttk.Label(type_row, text="", font=("Helvetica", 10, "bold"))
+        self.policy_type_label.pack(side="left")
 
         # Dynamic sub-frames - Container to hold the specific fields for each policy type.
         self.dynamic_container = ttk.Frame(right_frame)
@@ -258,8 +261,10 @@ class PolicyTab(ttk.Frame):
         self.create_form_row(self.life_frame, "Existing Conditions:", self.conditions_var)
         self.create_form_row(self.life_frame, "Beneficiary:", self.beneficiary_var)
 
-        # Initially show the correct frame based on the default dropdown value
-        self.update_dynamic_frames()
+        # Initially show no specific frame (will be populated when a policy is selected)
+        self.home_frame.pack_forget()
+        self.car_frame.pack_forget()
+        self.life_frame.pack_forget()
 
         # Bottom panel: Action Buttons
         btn_frame = ttk.Frame(right_frame)
@@ -277,32 +282,33 @@ class PolicyTab(ttk.Frame):
         ttk.Label(row, text=label_text, width=25).pack(side="left")
         ttk.Entry(row, textvariable=variable).pack(side="left", fill="x", expand=True)
 
-    # Function that updates which dynamic sub-frame is visible based on the selected policy type in the dropdown.
-    def update_dynamic_frames(self, *args):
-        """Hides all sub-frames and only shows the one matching the dropdown."""
-        self.home_frame.pack_forget()
-        self.car_frame.pack_forget()
-        self.life_frame.pack_forget()
-
-        selected_type = self.policy_type_var.get()
-        if selected_type == "HOME":
-            self.home_frame.pack(fill="both", expand=True)
-        elif selected_type == "CAR":
-            self.car_frame.pack(fill="both", expand=True)
-        elif selected_type == "LIFE":
-            self.life_frame.pack(fill="both", expand=True)
-
     def load_policies(self):
         """Fetches policies from the Oracle DB and populates the listbox."""
         self.policy_listbox.delete(tk.END)
         try:
             self.current_policies = self.policy_dao.get_all()
             for p in self.current_policies:
-                display_text = f"ID {p.policy_id}: Customer {p.customer_id} - ${p.coverage}"
+                # Determine policy type by checking child tables
+                policy_type = self._get_policy_type(p.policy_id)
+                display_text = f"ID {p.policy_id}: [{policy_type}] Customer {p.customer_id} - ${p.coverage}"
                 self.policy_listbox.insert(tk.END, display_text)
         except Exception as e:
             print(f"Database Error: {e}")
             self.policy_listbox.insert(tk.END, "Error connecting to Database")
+
+    def _get_policy_type(self, policy_id):
+        """Determine policy type by checking which child table has the record."""
+        try:
+            # Check each child table for this policy_id
+            if self.home_insurance_dao.get_by_policy(policy_id):
+                return "HOME"
+            if self.car_insurance_dao.get_by_policy(policy_id):
+                return "CAR"
+            if self.life_insurance_dao.get_by_policy(policy_id):
+                return "LIFE"
+        except Exception as e:
+            print(f"Error determining policy type: {e}")
+        return "UNKNOWN"
 
     def on_policy_select(self, event):
         """Fills the form on the right when a policy is clicked on the left."""
@@ -312,10 +318,57 @@ class PolicyTab(ttk.Frame):
         index = self.policy_listbox.curselection()[0]
         selected_policy = self.current_policies[index]
 
+        # Set base policy fields
         self.customer_id_var.set(str(selected_policy.customer_id or ""))
         self.start_date_var.set(selected_policy.start_date.strftime("%Y-%m-%d") if selected_policy.start_date else "")
         self.monthly_payment_var.set(str(selected_policy.monthly_payment or ""))
         self.coverage_var.set(str(selected_policy.coverage or ""))
+
+        # Determine policy type and load specific data
+        policy_id = selected_policy.policy_id
+        policy_type = self._get_policy_type(policy_id)
+        self.policy_type_var.set(policy_type)
+        self.policy_type_label.config(text=policy_type)
+
+        # Show the correct dynamic frame and load specific data
+        self._load_policy_specific_data(policy_id, policy_type)
+
+    def _load_policy_specific_data(self, policy_id, policy_type):
+        """Load and display policy-specific data based on type."""
+        # Hide all frames first
+        self.home_frame.pack_forget()
+        self.car_frame.pack_forget()
+        self.life_frame.pack_forget()
+
+        if policy_type == "HOME":
+            self.home_frame.pack(fill="both", expand=True)
+            home_data = self.home_insurance_dao.get_by_policy(policy_id)
+            if home_data:
+                h = home_data[0]
+                self.house_price_var.set(str(h.house_price or ""))
+                self.house_area_var.set(str(h.house_area or ""))
+                self.bedrooms_var.set(str(h.bedroom_number or ""))
+                self.bathrooms_var.set(str(h.bathroom_number or ""))
+                self.home_end_date_var.set(h.end_date.strftime("%Y-%m-%d") if h.end_date else "")
+                self.home_street_var.set(h.street or "")
+                self.home_city_var.set(h.city or "")
+        elif policy_type == "CAR":
+            self.car_frame.pack(fill="both", expand=True)
+            car_data = self.car_insurance_dao.get_by_policy(policy_id)
+            if car_data:
+                c = car_data[0]
+                self.make_var.set(c.make or "")
+                self.model_var.set(c.model or "")
+                self.vin_var.set(c.vin or "")
+                self.mileage_var.set(str(c.yearly_mileage or ""))
+                self.car_end_date_var.set(c.end_date.strftime("%Y-%m-%d") if c.end_date else "")
+        elif policy_type == "LIFE":
+            self.life_frame.pack(fill="both", expand=True)
+            life_data = self.life_insurance_dao.get_by_policy(policy_id)
+            if life_data:
+                l = life_data[0]
+                self.conditions_var.set(l.existing_conditions or "")
+                self.beneficiary_var.set(l.beneficiary or "")
 
 
 class InsuranceApp(tk.Tk):
