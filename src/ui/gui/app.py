@@ -1,8 +1,5 @@
 import tkinter as tk
-from dataclasses import dataclass
 from tkinter import ttk
-
-import select
 
 from src.dao.customer_dao import CustomerDAO
 from src.dao.policy_dao import PolicyDAO
@@ -159,6 +156,13 @@ class PolicyTab(ttk.Frame):
     def __init__(self, parent):
         super().__init__(parent)
 
+        # --- Policies data Access ---
+        self.policy_dao = PolicyDAO()
+        self.home_insurance_dao = HomeInsuranceDAO()
+        self.car_insurance_dao = CarInsuranceDAO()
+        self.life_insurance_dao = LifeInsuranceDAO()
+        self.current_policies = []
+
         # --- Policies data access ---
         self.policy_dao = PolicyDAO()
         self.home_dao = HomeInsuranceDAO()
@@ -188,7 +192,8 @@ class PolicyTab(ttk.Frame):
 
         self.policy_listbox = tk.Listbox(left_frame, width=35, height=20)
         self.policy_listbox.pack(fill="y", expand=True, pady=5)
-        self.policy_listbox.bind("<<ListboxSelect>>", self.on_policy_select)        # Bind selection event to a handler
+        self.policy_listbox.bind("<<ListboxSelect>>", self.on_policy_select)
+        self.load_policies()
 
         # RIGHT PANEL: Base Policy Form
         ttk.Label(right_frame, text="Policy Details", font=("Helvetica", 16, "bold")).pack(pady=(0, 10))
@@ -205,15 +210,12 @@ class PolicyTab(ttk.Frame):
         self.create_form_row(right_frame, "Monthly Payment ($):", self.monthly_payment_var)
         self.create_form_row(right_frame, "Coverage Amount ($):", self.coverage_var)
 
-        # Dropdown for Policy Type
+        # Policy Type (static text, determined by which child table has the record)
         type_row = ttk.Frame(right_frame)
         type_row.pack(fill="x", pady=5)
         ttk.Label(type_row, text="Policy Type:", width=25).pack(side="left")
-        type_combo = ttk.Combobox(type_row, textvariable=self.policy_type_var, values=["HOME", "CAR", "LIFE"], state="readonly")
-        type_combo.pack(side="left", fill="x", expand=True)
-
-        # Trigger an update whenever the dropdown value changes
-        self.policy_type_var.trace_add("write", self.update_dynamic_frames)
+        self.policy_type_label = ttk.Label(type_row, text="", font=("Helvetica", 10, "bold"))
+        self.policy_type_label.pack(side="left")
 
         # Dynamic sub-frames - Container to hold the specific fields for each policy type.
         self.dynamic_container = ttk.Frame(right_frame)
@@ -266,8 +268,10 @@ class PolicyTab(ttk.Frame):
         self.create_form_row(self.life_frame, "Existing Conditions:", self.conditions_var)
         self.create_form_row(self.life_frame, "Beneficiary:", self.beneficiary_var)
 
-        # Initially show the correct frame based on the default dropdown value
-        self.update_dynamic_frames()
+        # Initially show no specific frame (will be populated when a policy is selected)
+        self.home_frame.pack_forget()
+        self.car_frame.pack_forget()
+        self.life_frame.pack_forget()
 
         # Bottom panel: Action Buttons
         btn_frame = ttk.Frame(right_frame)
@@ -277,127 +281,6 @@ class PolicyTab(ttk.Frame):
         ttk.Button(btn_frame, text="Update Policy").pack(side="left", padx=5)
         ttk.Button(btn_frame, text="Delete Policy").pack(side="left", padx=5)
         ttk.Button(btn_frame, text="Clear Form").pack(side="left", padx=5)
-        self.load_policies()
-
-
-    def load_policies(self):
-        """Fetches policies from the Oracle DB and populates the listbox."""
-        self.policy_listbox.delete(0, tk.END)
-        self.current_policies_data = []
-
-        try:
-            base_polices = self.policy_dao.get_all()
-
-            for policy in base_polices:
-                policy_type = "UNKNOWN"
-                details = None
-
-                # Ask the database with sub-table this policy belongs to
-                home_records = self.home_dao.get_by_policy(policy.policy_id)
-                car_records = self.car_dao.get_by_policy(policy.policy_id)
-                life_records = self.life_dao.get_by_policy(policy.policy_id)
-
-                if home_records:
-                    policy_type = "HOME"
-                    details = home_records[0]
-                elif car_records:
-                    policy_type = "CAR"
-                    details = car_records[0]
-                elif life_records:
-                    policy_type = "LIFE"
-                    details = life_records[0]
-
-                # Save the full data for this policy in the list that tracks what's currently displayed in the listbox.
-                self.current_policies_data.append({
-                    "base": policy,
-                    "type": policy_type,
-                    "details": details,
-                })
-
-                display_text = f"Policy #{policy.policy_id}: {policy_type}"
-                self.policy_listbox.insert(tk.END, display_text)
-
-        except Exception as e:
-            print(f"Database Error while loading policies: {e}")
-            self.policy_listbox.insert(tk.END, "Error loading policies from Database")
-
-
-    def on_policy_select(self, event):
-        """
-        Fills the 'Policy Details' form with the data from the selected policy in the listbox.
-        """
-        # Get the index of the selected item in the listbox
-        if not self.policy_listbox.curselection():
-            return
-
-        index = self.policy_listbox.curselection()[0]
-        data = self.current_policies_data[index]
-
-        base_policy = data["base"]
-        policy_type = data["type"]
-        details = data["details"]
-
-        self.clear_form()  # Clear the form before populating it with new data
-
-        # Populate the 'Base Information' fields
-        self.customer_id_var.set(base_policy.customer_id or "")
-        self.start_date_var.set(base_policy.start_date.strftime("%Y-%m-%d") if hasattr(base_policy.start_date, "strftime") else base_policy.start_date)
-        self.monthly_payment_var.set(base_policy.monthly_payment or "")
-        self.coverage_var.set(base_policy.coverage_amount or "")
-        self.policy_type_var.set(base_policy.policy_type)
-
-        # Populate the 'dynamic' fields based on the policy type
-        if policy_type == "HOME" and details:
-            self.house_price_var.set(details.house_price or "")
-            self.house_area_var.set(details.house_area or "")
-            self.bedrooms_var.set(details.bedroom_number or "")
-            self.bathrooms_var.set(details.bathroom_number or "")
-            self.home_end_date_var.set(details.end_date.strftime("%Y-%m-%d") if hasattr(details.end_date, "strftime") else details.end_date)
-            self.home_street_var.set(details.street or "")
-            self.home_city_var.set(details.city or "")
-
-        elif policy_type == "CAR" and details:
-            self.make_var.set(details.make or "")
-            self.model_var.set(details.model or "")
-            self.vin_var.set(details.vin or "")
-            self.mileage_var.set(details.yearly_mileage or "")
-            self.car_end_date_var.set(details.end_date.strftime("%Y-%m-%d") if hasattr(details.end_date, "strftime") else details.end_date)
-
-        elif base_policy.policy_type == "LIFE" and details:
-            self.conditions_var.set(details.existing_conditions or "")
-            self.beneficiary_var.set(details.beneficiary or "")
-
-    def clear_form(self):
-        """
-        Clears all text boxes in both the Base and Dynamic forms.
-        """
-        # Base fields
-        self.customer_id_var.set("")
-        self.start_date_var.set("")
-        self.monthly_payment_var.set("")
-        self.coverage_var.set("")
-
-        # Home fields
-        self.house_price_var.set("")
-        self.house_area_var.set("")
-        self.bedrooms_var.set("")
-        self.bathrooms_var.set("")
-        self.home_end_date_var.set("")
-        self.home_street_var.set("")
-        self.home_city_var.set("")
-
-        # Car fields
-        self.make_var.set("")
-        self.model_var.set("")
-        self.vin_var.set("")
-        self.mileage_var.set("")
-        self.car_end_date_var.set("")
-
-        # Life fields
-        self.conditions_var.set("")
-        self.beneficiary_var.set("")
-
-        self.policy_listbox.selection_clear(0, tk.END)
 
     # Function to create a labeled entry row in the form, used for both base and dynamic fields.
     def create_form_row(self, parent, label_text, variable):
@@ -406,20 +289,93 @@ class PolicyTab(ttk.Frame):
         ttk.Label(row, text=label_text, width=25).pack(side="left")
         ttk.Entry(row, textvariable=variable).pack(side="left", fill="x", expand=True)
 
-    # Function that updates which dynamic sub-frame is visible based on the selected policy type in the dropdown.
-    def update_dynamic_frames(self, *args):
-        """Hides all sub-frames and only shows the one matching the dropdown."""
+    def load_policies(self):
+        """Fetches policies from the Oracle DB and populates the listbox."""
+        self.policy_listbox.delete(tk.END)
+        try:
+            self.current_policies = self.policy_dao.get_all()
+            for p in self.current_policies:
+                # Determine policy type by checking child tables
+                policy_type = self._get_policy_type(p.policy_id)
+                display_text = f"ID {p.policy_id}: [{policy_type}] Customer {p.customer_id} - ${p.coverage}"
+                self.policy_listbox.insert(tk.END, display_text)
+        except Exception as e:
+            print(f"Database Error: {e}")
+            self.policy_listbox.insert(tk.END, "Error connecting to Database")
+
+    def _get_policy_type(self, policy_id):
+        """Determine policy type by checking which child table has the record."""
+        try:
+            # Check each child table for this policy_id
+            if self.home_insurance_dao.get_by_policy(policy_id):
+                return "HOME"
+            if self.car_insurance_dao.get_by_policy(policy_id):
+                return "CAR"
+            if self.life_insurance_dao.get_by_policy(policy_id):
+                return "LIFE"
+        except Exception as e:
+            print(f"Error determining policy type: {e}")
+        return "UNKNOWN"
+
+    def on_policy_select(self, event):
+        """Fills the form on the right when a policy is clicked on the left."""
+        if not self.policy_listbox.curselection():
+            return
+
+        index = self.policy_listbox.curselection()[0]
+        selected_policy = self.current_policies[index]
+
+        # Set base policy fields
+        self.customer_id_var.set(str(selected_policy.customer_id or ""))
+        self.start_date_var.set(selected_policy.start_date.strftime("%Y-%m-%d") if selected_policy.start_date else "")
+        self.monthly_payment_var.set(str(selected_policy.monthly_payment or ""))
+        self.coverage_var.set(str(selected_policy.coverage or ""))
+
+        # Determine policy type and load specific data
+        policy_id = selected_policy.policy_id
+        policy_type = self._get_policy_type(policy_id)
+        self.policy_type_var.set(policy_type)
+        self.policy_type_label.config(text=policy_type)
+
+        # Show the correct dynamic frame and load specific data
+        self._load_policy_specific_data(policy_id, policy_type)
+
+    def _load_policy_specific_data(self, policy_id, policy_type):
+        """Load and display policy-specific data based on type."""
+        # Hide all frames first
         self.home_frame.pack_forget()
         self.car_frame.pack_forget()
         self.life_frame.pack_forget()
 
-        selected_type = self.policy_type_var.get()
-        if selected_type == "HOME":
+        if policy_type == "HOME":
             self.home_frame.pack(fill="both", expand=True)
-        elif selected_type == "CAR":
+            home_data = self.home_insurance_dao.get_by_policy(policy_id)
+            if home_data:
+                h = home_data[0]
+                self.house_price_var.set(str(h.house_price or ""))
+                self.house_area_var.set(str(h.house_area or ""))
+                self.bedrooms_var.set(str(h.bedroom_number or ""))
+                self.bathrooms_var.set(str(h.bathroom_number or ""))
+                self.home_end_date_var.set(h.end_date.strftime("%Y-%m-%d") if h.end_date else "")
+                self.home_street_var.set(h.street or "")
+                self.home_city_var.set(h.city or "")
+        elif policy_type == "CAR":
             self.car_frame.pack(fill="both", expand=True)
-        elif selected_type == "LIFE":
+            car_data = self.car_insurance_dao.get_by_policy(policy_id)
+            if car_data:
+                c = car_data[0]
+                self.make_var.set(c.make or "")
+                self.model_var.set(c.model or "")
+                self.vin_var.set(c.vin or "")
+                self.mileage_var.set(str(c.yearly_mileage or ""))
+                self.car_end_date_var.set(c.end_date.strftime("%Y-%m-%d") if c.end_date else "")
+        elif policy_type == "LIFE":
             self.life_frame.pack(fill="both", expand=True)
+            life_data = self.life_insurance_dao.get_by_policy(policy_id)
+            if life_data:
+                l = life_data[0]
+                self.conditions_var.set(l.existing_conditions or "")
+                self.beneficiary_var.set(l.beneficiary or "")
 
 
 class InsuranceApp(tk.Tk):
