@@ -1,7 +1,14 @@
 import tkinter as tk
+from dataclasses import dataclass
 from tkinter import ttk
 
+import select
+
 from src.dao.customer_dao import CustomerDAO
+from src.dao.policy_dao import PolicyDAO
+from src.dao.home_insurance_dao import HomeInsuranceDAO
+from src.dao.car_insurance_dao import CarInsuranceDAO
+from src.dao.life_insurance_dao import LifeInsuranceDAO
 
 class CustomerTab(ttk.Frame):
     """
@@ -10,7 +17,7 @@ class CustomerTab(ttk.Frame):
     def __init__(self, parent):
         super().__init__(parent)
 
-        # --- Data Access ---
+        # --- Customers data access ---
         self.customer_dao = CustomerDAO()
         self.current_customer =[]
 
@@ -87,21 +94,24 @@ class CustomerTab(ttk.Frame):
         """Fetches customers from the Oracle DB and populates the listbox."""
         self.customer_listbox.delete(0, tk.END)
         try:
-            # Fetch all records using your teammates' DAO
+            # Call the get_all method from your teammates' CustomerDAO to fetch all records
             self.current_customers = self.customer_dao.get_all()
             for c in self.current_customers:
                 display_text = f"ID {c.customer_id}: {c.last_name}, {c.first_name}"
                 self.customer_listbox.insert(tk.END, display_text)
         except Exception as e:
-            print(f"Database Error: {e}")
-            self.customer_listbox.insert(tk.END, "Error connecting to Database")
+            print(f"Database Error while loading customers: {e}")
+            self.customer_listbox.insert(tk.END, "Error loading customers from Database")
 
     def on_customer_select(self, event):
-        """Fills the form on the right when a name is clicked on the left."""
+        """Fills the 'Customer Details' form with the data from the selected customer in the listbox."""
+        # Get the index of the selected item in the listbox
         if not self.customer_listbox.curselection():
             return
 
         index = self.customer_listbox.curselection()[0]
+
+        # Get the full data object for that customer from the list
         selected_customer = self.current_customers[index]
 
         # Populate the text boxes with the database values
@@ -149,6 +159,15 @@ class PolicyTab(ttk.Frame):
     def __init__(self, parent):
         super().__init__(parent)
 
+        # --- Policies data access ---
+        self.policy_dao = PolicyDAO()
+        self.home_dao = HomeInsuranceDAO()
+        self.car_dao = CarInsuranceDAO()
+        self.life_dao = LifeInsuranceDAO()
+
+        # This list will hold the full data objects for the policies currently displayed in the listbox.
+        self.current_policies_data = []
+
         # --- UI Layout ---
         left_frame = ttk.Frame(self)
         left_frame.pack(side="left", fill="y", padx=10, pady=10)
@@ -169,6 +188,7 @@ class PolicyTab(ttk.Frame):
 
         self.policy_listbox = tk.Listbox(left_frame, width=35, height=20)
         self.policy_listbox.pack(fill="y", expand=True, pady=5)
+        self.policy_listbox.bind("<<ListboxSelect>>", self.on_policy_select)        # Bind selection event to a handler
 
         # RIGHT PANEL: Base Policy Form
         ttk.Label(right_frame, text="Policy Details", font=("Helvetica", 16, "bold")).pack(pady=(0, 10))
@@ -257,6 +277,127 @@ class PolicyTab(ttk.Frame):
         ttk.Button(btn_frame, text="Update Policy").pack(side="left", padx=5)
         ttk.Button(btn_frame, text="Delete Policy").pack(side="left", padx=5)
         ttk.Button(btn_frame, text="Clear Form").pack(side="left", padx=5)
+        self.load_policies()
+
+
+    def load_policies(self):
+        """Fetches policies from the Oracle DB and populates the listbox."""
+        self.policy_listbox.delete(0, tk.END)
+        self.current_policies_data = []
+
+        try:
+            base_polices = self.policy_dao.get_all()
+
+            for policy in base_polices:
+                policy_type = "UNKNOWN"
+                details = None
+
+                # Ask the database with sub-table this policy belongs to
+                home_records = self.home_dao.get_by_policy(policy.policy_id)
+                car_records = self.car_dao.get_by_policy(policy.policy_id)
+                life_records = self.life_dao.get_by_policy(policy.policy_id)
+
+                if home_records:
+                    policy_type = "HOME"
+                    details = home_records[0]
+                elif car_records:
+                    policy_type = "CAR"
+                    details = car_records[0]
+                elif life_records:
+                    policy_type = "LIFE"
+                    details = life_records[0]
+
+                # Save the full data for this policy in the list that tracks what's currently displayed in the listbox.
+                self.current_policies_data.append({
+                    "base": policy,
+                    "type": policy_type,
+                    "details": details,
+                })
+
+                display_text = f"Policy #{policy.policy_id}: {policy_type}"
+                self.policy_listbox.insert(tk.END, display_text)
+
+        except Exception as e:
+            print(f"Database Error while loading policies: {e}")
+            self.policy_listbox.insert(tk.END, "Error loading policies from Database")
+
+
+    def on_policy_select(self, event):
+        """
+        Fills the 'Policy Details' form with the data from the selected policy in the listbox.
+        """
+        # Get the index of the selected item in the listbox
+        if not self.policy_listbox.curselection():
+            return
+
+        index = self.policy_listbox.curselection()[0]
+        data = self.current_policies_data[index]
+
+        base_policy = data["base"]
+        policy_type = data["type"]
+        details = data["details"]
+
+        self.clear_form()  # Clear the form before populating it with new data
+
+        # Populate the 'Base Information' fields
+        self.customer_id_var.set(base_policy.customer_id or "")
+        self.start_date_var.set(base_policy.start_date.strftime("%Y-%m-%d") if hasattr(base_policy.start_date, "strftime") else base_policy.start_date)
+        self.monthly_payment_var.set(base_policy.monthly_payment or "")
+        self.coverage_var.set(base_policy.coverage_amount or "")
+        self.policy_type_var.set(base_policy.policy_type)
+
+        # Populate the 'dynamic' fields based on the policy type
+        if policy_type == "HOME" and details:
+            self.house_price_var.set(details.house_price or "")
+            self.house_area_var.set(details.house_area or "")
+            self.bedrooms_var.set(details.bedroom_number or "")
+            self.bathrooms_var.set(details.bathroom_number or "")
+            self.home_end_date_var.set(details.end_date.strftime("%Y-%m-%d") if hasattr(details.end_date, "strftime") else details.end_date)
+            self.home_street_var.set(details.street or "")
+            self.home_city_var.set(details.city or "")
+
+        elif policy_type == "CAR" and details:
+            self.make_var.set(details.make or "")
+            self.model_var.set(details.model or "")
+            self.vin_var.set(details.vin or "")
+            self.mileage_var.set(details.yearly_mileage or "")
+            self.car_end_date_var.set(details.end_date.strftime("%Y-%m-%d") if hasattr(details.end_date, "strftime") else details.end_date)
+
+        elif base_policy.policy_type == "LIFE" and details:
+            self.conditions_var.set(details.existing_conditions or "")
+            self.beneficiary_var.set(details.beneficiary or "")
+
+    def clear_form(self):
+        """
+        Clears all text boxes in both the Base and Dynamic forms.
+        """
+        # Base fields
+        self.customer_id_var.set("")
+        self.start_date_var.set("")
+        self.monthly_payment_var.set("")
+        self.coverage_var.set("")
+
+        # Home fields
+        self.house_price_var.set("")
+        self.house_area_var.set("")
+        self.bedrooms_var.set("")
+        self.bathrooms_var.set("")
+        self.home_end_date_var.set("")
+        self.home_street_var.set("")
+        self.home_city_var.set("")
+
+        # Car fields
+        self.make_var.set("")
+        self.model_var.set("")
+        self.vin_var.set("")
+        self.mileage_var.set("")
+        self.car_end_date_var.set("")
+
+        # Life fields
+        self.conditions_var.set("")
+        self.beneficiary_var.set("")
+
+        self.policy_listbox.selection_clear(0, tk.END)
 
     # Function to create a labeled entry row in the form, used for both base and dynamic fields.
     def create_form_row(self, parent, label_text, variable):
